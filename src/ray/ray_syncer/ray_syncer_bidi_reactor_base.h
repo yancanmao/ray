@@ -32,7 +32,10 @@ namespace ray::syncer {
 /// It keeps track of the message received and sent between two nodes and uses that to
 /// deduplicate the messages. It also supports the batching for performance purposes.
 template <typename T>
-class RaySyncerBidiReactorBase : public RaySyncerBidiReactor, public T {
+class RaySyncerBidiReactorBase
+    : public RaySyncerBidiReactor,
+      public T,
+      public std::enable_shared_from_this<RaySyncerBidiReactorBase<T>> {
  public:
   /// Constructor of RaySyncerBidiReactor.
   ///
@@ -208,25 +211,28 @@ class RaySyncerBidiReactorBase : public RaySyncerBidiReactor, public T {
   using T::StartWrite;
 
   void OnWriteDone(bool ok) override {
+    auto this_ptr = this->shared_from_this();
     io_context_.dispatch(
-        [this, disconnected = IsDisconnected(), ok]() {
+        [this_ptr, disconnected = IsDisconnected(), ok]() {
           if (*disconnected) {
             return;
           }
           if (ok) {
-            SendNext();
+            this_ptr->SendNext();
           } else {
-            RAY_LOG_EVERY_MS(INFO, 1000) << "Failed to send a message to node: "
-                                         << NodeID::FromBinary(GetRemoteNodeID());
-            Disconnect();
+            RAY_LOG_EVERY_MS(INFO, 1000)
+                << "Failed to send a message to node: "
+                << NodeID::FromBinary(this_ptr->GetRemoteNodeID());
+            this_ptr->Disconnect();
           }
         },
         "");
   }
 
   void OnReadDone(bool ok) override {
+    auto this_ptr = this->shared_from_this();
     io_context_.dispatch(
-        [this, ok, msg_batch = std::move(receiving_message_batch_)]() mutable {
+        [this_ptr, ok, msg_batch = std::move(receiving_message_batch_)]() mutable {
           // NOTE: According to the grpc callback streaming api best practices 3.)
           // https://grpc.io/docs/languages/cpp/best_practices/#callback-streaming-api
           // The client must read all incoming data i.e. until OnReadDone(ok = false)
@@ -234,19 +240,20 @@ class RaySyncerBidiReactorBase : public RaySyncerBidiReactor, public T {
           // still need to allow OnReadDone to repeatedly execute until StartReadData has
           // consumed all the data for OnDone to be called.
           if (!ok) {
-            RAY_LOG_EVERY_MS(INFO, 1000) << "Failed to read a message from node: "
-                                         << NodeID::FromBinary(GetRemoteNodeID());
-            Disconnect();
+            RAY_LOG_EVERY_MS(INFO, 1000)
+                << "Failed to read a message from node: "
+                << NodeID::FromBinary(this_ptr->GetRemoteNodeID());
+            this_ptr->Disconnect();
             return;
           }
 
           // Successful rpc completion callback.
           RAY_CHECK(!msg_batch->messages().empty());
-          if (on_rpc_completion_) {
-            on_rpc_completion_(NodeID::FromBinary(remote_node_id_));
+          if (this_ptr->on_rpc_completion_) {
+            this_ptr->on_rpc_completion_(NodeID::FromBinary(this_ptr->remote_node_id_));
           }
-          ReceiveUpdate(std::move(msg_batch));
-          StartPull();
+          this_ptr->ReceiveUpdate(std::move(msg_batch));
+          this_ptr->StartPull();
         },
         "");
   }

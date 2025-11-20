@@ -37,7 +37,7 @@ RayServerBidiReactor::RayServerBidiReactor(
     instrumented_io_context &io_context,
     const std::string &local_node_id,
     std::function<void(std::shared_ptr<const RaySyncMessage>)> message_processor,
-    std::function<void(RaySyncerBidiReactor *, bool)> cleanup_cb,
+    std::function<void(std::shared_ptr<RayServerBidiReactor>, bool)> cleanup_cb,
     const std::optional<ray::rpc::AuthenticationToken> &auth_token,
     size_t max_batch_size,
     uint64_t max_batch_delay_ms)
@@ -91,12 +91,10 @@ void RayServerBidiReactor::OnCancel() {
 }
 
 void RayServerBidiReactor::OnDone() {
+  // Use std::static_pointer_cast to ensure the correct type
+  auto self = std::static_pointer_cast<RayServerBidiReactor>(shared_from_this());
   io_context_.dispatch(
-      [this, cleanup_cb = cleanup_cb_, remote_node_id = GetRemoteNodeID()]() {
-        cleanup_cb(this, false);
-        delete this;
-      },
-      "");
+      [self, cleanup_cb = cleanup_cb_]() { self->cleanup_cb_(self, false); }, "");
 }
 
 }  // namespace ray::syncer

@@ -34,7 +34,7 @@ class RayClientBidiReactor : public RaySyncerBidiReactorBase<ClientBidiReactor> 
       const std::string &local_node_id,
       instrumented_io_context &io_context,
       std::function<void(std::shared_ptr<const RaySyncMessage>)> message_processor,
-      std::function<void(RaySyncerBidiReactor *, bool)> cleanup_cb,
+      std::function<void(std::shared_ptr<RayClientBidiReactor>, bool)> cleanup_cb,
       std::unique_ptr<ray::rpc::syncer::RaySyncer::Stub> stub,
       size_t max_batch_size,
       uint64_t max_batch_delay_ms);
@@ -47,7 +47,7 @@ class RayClientBidiReactor : public RaySyncerBidiReactorBase<ClientBidiReactor> 
   void OnDone(const grpc::Status &status) override;
 
   /// Cleanup callback when the call ends.
-  const std::function<void(RaySyncerBidiReactor *, bool)> cleanup_cb_;
+  const std::function<void(std::shared_ptr<RayClientBidiReactor>, bool)> cleanup_cb_;
 
   /// grpc callback context
   grpc::ClientContext client_context_;

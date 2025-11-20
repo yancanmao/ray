@@ -39,7 +39,7 @@ class RayServerBidiReactor : public RaySyncerBidiReactorBase<ServerBidiReactor> 
       instrumented_io_context &io_context,
       const std::string &local_node_id,
       std::function<void(std::shared_ptr<const RaySyncMessage>)> message_processor,
-      std::function<void(RaySyncerBidiReactor *, bool)> cleanup_cb,
+      std::function<void(std::shared_ptr<RayServerBidiReactor>, bool)> cleanup_cb,
       const std::optional<ray::rpc::AuthenticationToken> &auth_token,
       size_t max_batch_size,
       uint64_t max_batch_delay_ms);
@@ -59,7 +59,7 @@ class RayServerBidiReactor : public RaySyncerBidiReactorBase<ServerBidiReactor> 
   }
 
   /// Cleanup callback when the call ends.
-  const std::function<void(RaySyncerBidiReactor *, bool)> cleanup_cb_;
+  const std::function<void(std::shared_ptr<RayServerBidiReactor>, bool)> cleanup_cb_;
 
   /// grpc callback context
   grpc::CallbackServerContext *server_context_;

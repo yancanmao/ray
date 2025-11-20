@@ -360,11 +360,11 @@ struct SyncerServerTest {
       io_context.post(
           [&p, this]() mutable {
             for (const auto &[node_id, conn] : syncer->sync_reactors_) {
-              auto ptr = dynamic_cast<RayServerBidiReactor *>(conn);
+              auto ptr = std::dynamic_pointer_cast<RayServerBidiReactor>(conn);
               size_t remainings = 0;
               if (ptr == nullptr) {
-                remainings =
-                    dynamic_cast<RayClientBidiReactor *>(conn)->sending_buffer_.size();
+                remainings = std::dynamic_pointer_cast<RayClientBidiReactor>(conn)
+                                 ->sending_buffer_.size();
               } else {
                 remainings = ptr->sending_buffer_.size();
               }
@@ -675,7 +675,13 @@ TEST_F(SyncerTest, Reconnect) {
   s1.syncer->Disconnect(s2.syncer->GetLocalNodeID());
   s1.syncer->Connect(s2.syncer->GetLocalNodeID(), MakeChannel("19991"));
   ASSERT_TRUE(s1.WaitUntil(
-      [&s1]() { return s1.syncer->sync_reactors_.size() == 1 && s1.snapshot_taken == 1; },
+      [&s1, &s2]() {
+        RAY_LOG(INFO) << "DEBUG: size=" << s1.syncer->sync_reactors_.size()
+                      << " snapshot_taken=" << s1.snapshot_taken;
+        RAY_LOG(INFO) << "DEBUG: s2 received versions: "
+                      << s2.syncer->sync_reactors_.size();
+        return s1.syncer->sync_reactors_.size() == 1 && s1.snapshot_taken == 1;
+      },
       5));
 
   s1.local_versions[0] = 1;
@@ -906,29 +912,30 @@ struct MockRaySyncerService : public ray::rpc::syncer::RaySyncer::CallbackServic
   MockRaySyncerService(
       instrumented_io_context &_io_context,
       std::function<void(std::shared_ptr<const RaySyncMessage>)> _message_processor,
-      std::function<void(RaySyncerBidiReactor *reactor, bool)> _cleanup_cb)
+      std::function<void(std::shared_ptr<RayServerBidiReactor> reactor, bool)>
+          _cleanup_cb)
       : message_processor(_message_processor),
         cleanup_cb(_cleanup_cb),
         node_id(NodeID::FromRandom()),
         io_context(_io_context) {}
   grpc::ServerBidiReactor<RaySyncMessageBatch, RaySyncMessageBatch> *StartSync(
       grpc::CallbackServerContext *context) override {
-    reactor = new RayServerBidiReactor(context,
-                                       io_context,
-                                       node_id.Binary(),
-                                       message_processor,
-                                       cleanup_cb,
-                                       std::nullopt,
-                                       /*max_batch_size=*/1,
-                                       /*max_batch_delay_ms=*/0);
-    return reactor;
+    reactor = std::make_shared<RayServerBidiReactor>(context,
+                                                     io_context,
+                                                     node_id.Binary(),
+                                                     message_processor,
+                                                     cleanup_cb,
+                                                     std::nullopt,
+                                                     /*max_batch_size=*/1,
+                                                     /*max_batch_delay_ms=*/0);
+    return reactor.get();
   }
 
   std::function<void(std::shared_ptr<const RaySyncMessage>)> message_processor;
-  std::function<void(RaySyncerBidiReactor *reactor, bool)> cleanup_cb;
+  std::function<void(std::shared_ptr<RayServerBidiReactor> reactor, bool)> cleanup_cb;
   NodeID node_id;
   instrumented_io_context &io_context;
-  RayServerBidiReactor *reactor = nullptr;
+  std::shared_ptr<RayServerBidiReactor> reactor = nullptr;
 };
 
 class SyncerReactorTest : public ::testing::Test {
@@ -937,7 +944,7 @@ class SyncerReactorTest : public ::testing::Test {
     rpc_service_ = std::make_unique<MockRaySyncerService>(
         io_context_,
         [this](auto msg) { server_received_message.set_value(msg); },
-        [this](RaySyncerBidiReactor *reactor, bool restart) {
+        [this](std::shared_ptr<RayServerBidiReactor> reactor, bool restart) {
           server_cleanup.set_value(std::make_pair(reactor->GetRemoteNodeID(), restart));
         });
     grpc::ServerBuilder builder;
@@ -951,19 +958,17 @@ class SyncerReactorTest : public ::testing::Test {
 
     // `cli_reactor` will be deleted by `RayClientBidiReactor::OnDone`, so we need to use
     // `release()` to release ownership.
-    cli_reactor =
-        std::make_unique<RayClientBidiReactor>(
-            rpc_service_->node_id.Binary(),
-            client_node_id.Binary(),
-            io_context_,
-            [this](auto msg) { client_received_message.set_value(msg); },
-            [this](RaySyncerBidiReactor *reactor, bool r) {
-              client_cleanup.set_value(std::make_pair(reactor->GetRemoteNodeID(), r));
-            },
-            std::move(cli_stub),
-            /* max_batch_size */ 1,
-            /* max_batch_delay_ms */ 0)
-            .release();
+    cli_reactor = std::make_shared<RayClientBidiReactor>(
+        rpc_service_->node_id.Binary(),
+        client_node_id.Binary(),
+        io_context_,
+        [this](auto msg) { client_received_message.set_value(msg); },
+        [this](std::shared_ptr<RayClientBidiReactor> reactor, bool r) {
+          client_cleanup.set_value(std::make_pair(reactor->GetRemoteNodeID(), r));
+        },
+        std::move(cli_stub),
+        /* max_batch_size */ 1,
+        /* max_batch_delay_ms */ 0);
     cli_reactor->StartCall();
 
     work_guard_ = std::make_unique<work_guard_type>(io_context_.get_executor());
@@ -989,7 +994,8 @@ class SyncerReactorTest : public ::testing::Test {
     thread_->join();
   }
 
-  std::pair<RayServerBidiReactor *, RayClientBidiReactor *> GetReactors() {
+  std::pair<std::shared_ptr<RayServerBidiReactor>, std::shared_ptr<RayClientBidiReactor>>
+  GetReactors() {
     return std::make_pair(rpc_service_->reactor, cli_reactor);
   }
 
@@ -1015,7 +1021,7 @@ class SyncerReactorTest : public ::testing::Test {
   std::promise<std::pair<std::string, bool>> client_cleanup;
 
   grpc::ClientContext cli_context;
-  RayClientBidiReactor *cli_reactor;
+  std::shared_ptr<RayClientBidiReactor> cli_reactor;
   std::shared_ptr<grpc::Channel> cli_channel;
   NodeID client_node_id;
 };

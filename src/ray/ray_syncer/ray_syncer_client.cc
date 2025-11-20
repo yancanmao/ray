@@ -27,7 +27,7 @@ RayClientBidiReactor::RayClientBidiReactor(
     const std::string &local_node_id,
     instrumented_io_context &io_context,
     std::function<void(std::shared_ptr<const RaySyncMessage>)> message_processor,
-    std::function<void(RaySyncerBidiReactor *, bool)> cleanup_cb,
+    std::function<void(std::shared_ptr<RayClientBidiReactor>, bool)> cleanup_cb,
     std::unique_ptr<ray::rpc::syncer::RaySyncer::Stub> stub,
     size_t max_batch_size,
     uint64_t max_batch_delay_ms)
@@ -54,12 +54,9 @@ RayClientBidiReactor::RayClientBidiReactor(
 }
 
 void RayClientBidiReactor::OnDone(const grpc::Status &status) {
-  io_context_.dispatch(
-      [this, status]() {
-        cleanup_cb_(this, !status.ok());
-        delete this;
-      },
-      "");
+  // Use std::static_pointer_cast to ensure the correct type
+  auto self = std::static_pointer_cast<RayClientBidiReactor>(shared_from_this());
+  io_context_.dispatch([self, status]() { self->cleanup_cb_(self, !status.ok()); }, "");
 }
 
 void RayClientBidiReactor::DoDisconnect() {
