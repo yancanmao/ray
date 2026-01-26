@@ -140,11 +140,20 @@ void SubscriberChannel::HandlePublishedMessage(const rpc::Address &publisher_add
   // If the object id is still subscribed, run a callback to the callback io service.
   const auto &channel_name =
       rpc::ChannelType_descriptor()->FindValueByNumber(channel_type_)->name();
+
+  // NOTE: This code change is only for reproducing the bug, will remove it before merging
+  // this PR.
+  if (channel_type_ == rpc::ChannelType::WORKER_REF_REMOVED_CHANNEL) {
+    RAY_LOG(INFO) << "++++++ HandlePublishedMessage, channel: " << channel_name
+                  << ", channel_type: " << channel_type << ", key_id: " << key_id;
+  }
+
   callback_service_->post(
       [subscription_callback = std::move(maybe_subscription_callback.value()),
        msg = std::move(pub_message)]() mutable  // allow data to be moved
       { subscription_callback(std::move(msg)); },
-      "Subscriber.HandlePublishedMessage_" + channel_name);
+      "Subscriber.HandlePublishedMessage_" + channel_name,
+      channel_type_ == rpc::ChannelType::WORKER_REF_REMOVED_CHANNEL ? 5000000 : 0);
 }
 
 void SubscriberChannel::HandlePublisherFailure(const rpc::Address &publisher_address,
